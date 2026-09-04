@@ -6,7 +6,8 @@
 	url = https://gitlab.com/libeigen/eigen.git
 [submodule "external_libs/fmt"]
 	path = external_libs/fmt
-	url = https://github.com/fmtlib/fmt.git
+	url = https://github.com/neoblackxt/fmt.git
+	branch = lightgbm-nvcc-patch
 [submodule "external_libs/fast_double_parser"]
 	path = external_libs/fast_double_parser
 	url = https://github.com/lemire/fast_double_parser.git

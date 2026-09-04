@@ -1,5 +1,21 @@
 <img src=https://github.com/lightgbm-org/LightGBM/blob/main/docs/logo/LightGBM_logo_black_text.svg width=300 />
 
+> [!IMPORTANT]
+> ## Windows CUDA build (no NCCL) — patch set by @neoblackxt
+>
+> This is a fork of LightGBM carrying a minimal patch set that makes
+> **single-GPU CUDA builds work on Windows**. Upstream requires the NCCL
+> library for *all* CUDA builds since #6138, but NCCL has no Windows
+> distribution. Since every NCCL call site only runs with `num_gpu > 1`,
+> we bundle a tiny NCCL **stub** library (`cmake/nccl-stub/`) that satisfies
+> the linker and aborts loudly if ever invoked — no upstream code is removed.
+> See `patches/README.md` for details.
+>
+> **Prebuilt Windows binaries** (CLI `lightgbm.exe`, `lib_lightgbm.dll`, and a
+> CUDA-enabled Python wheel) are published by GitHub Actions on every `v*` tag
+> — check the [Releases](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases) page.
+> Training usage: `device="cuda"` (single GPU, `num_gpu=1`).
+
 > [!NOTE]
 > This project moved from `Microsoft/LightGBM` to `lightgbm-org/LightGBM` in March 2026.
 > This repository is still the official LightGBM source code, managed by the same maintainers (including the creator of LightGBM).
