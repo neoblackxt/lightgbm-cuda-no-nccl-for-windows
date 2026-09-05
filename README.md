@@ -19,6 +19,28 @@
 > | CUDA (recommended) | `lightgbm.exe`, `lib_lightgbm.dll`, `lightgbm-*.py3-none-win_amd64.whl` | `cpu`, `cuda` |
 > | All-in-one | `all-lightgbm.exe`, `all-lib_lightgbm.dll`, `lightgbm-*+all-*.whl` | `cpu`, `cuda`, `gpu` (OpenCL) |
 >
+> ### Hardware compatibility
+>
+> CUDA mode is compiled for consumer NVIDIA GPUs, Turing and newer
+> (`CUDAARCHS=75;80;86;89;120`):
+>
+> | GPU family | Examples | Compute capability | CUDA variant `device="cuda"` | All-in-one `device="cuda"` | All-in-one `device="gpu"` (OpenCL) |
+> |---|---|---|---|---|---|
+> | RTX 50 series (Blackwell) | 5090 / 5080 / 5070 | sm_120 | ✅ | ✅ | ✅ |
+> | RTX 40 series (Ada) | 4090 / 4080 / 4070 | sm_89 | ✅ | ✅ | ✅ |
+> | RTX 30 series (Ampere) | 3090 / 3080 / 3060 | sm_80 / sm_86 | ✅ | ✅ | ✅ |
+> | GTX 16 / RTX 20 series (Turing) | 1660 / 2060 / 2080 | sm_75 | ✅ | ✅ | ✅ |
+> | GTX 10 series and older (Pascal and before) | 1060 / 1070 / 900 | sm_61 … | ❌ (CUDA 13 dropped these) | ❌ | ✅ |
+>
+> - **Driver**: CUDA mode needs an NVIDIA driver new enough for CUDA 13.3
+>   (check the `CUDA Version` field in `nvidia-smi` output). The OpenCL mode
+>   only needs any GPU driver providing OpenCL 1.2+ (the `OpenCL.dll` that
+>   ships with NVIDIA/AMD/Intel drivers).
+> - **CPU**: any x86-64 processor, all variants.
+> - Data-center cards (A100/H100, sm_90/sm_100) are not in the default arch
+>   list; edit `CUDAARCHS` in `.github/workflows/build-windows-cuda.yml` and
+>   re-tag to add them.
+>
 > ### Switching devices (Python)
 >
 > ```python

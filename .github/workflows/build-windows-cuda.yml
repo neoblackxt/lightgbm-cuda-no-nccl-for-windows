@@ -52,14 +52,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\vcpkg\installed
-          key: vcpkg-boost-filesystem-x64-windows-static-md
+          key: vcpkg-boost-fs-compute-x64-windows-static-md
 
       - name: Install Boost via vcpkg (static /MD)
         if: matrix.variant == 'cuda-opencl'
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-filesystem:x64-windows-static-md
-          Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\share" -Filter "*boost*" | Select-Object Name
+          # boost-compute (header-only) pulls every header dependency that the
+          # bundled external_libs/compute headers include (algorithm/string, ...)
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-compute:x64-windows-static-md boost-filesystem:x64-windows-static-md
           Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib" -Filter "*boost*" | Select-Object Name
 
       - name: Build CLI
