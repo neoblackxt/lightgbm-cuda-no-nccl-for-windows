@@ -1,0 +1,356 @@
+From ba6139bb606175077487e22d5dbd72b8e4704d73 Mon Sep 17 00:00:00 2001
+From: Neo Black <neoblackxt@outlook.com>
+Date: Fri, 4 Sep 2026 23:07:43 +0800
+Subject: [PATCH] Windows single-GPU CUDA build: bundle NCCL stub + toolchain
+ fixes
+
+Bypass the hard NCCL dependency added by #6138 (multi-GPU CUDA) so that
+single-GPU CUDA builds work on Windows, where NCCL has no official
+distribution. All upstream commits are kept; NCCL code compiles as-is.
+
+- CMakeLists: find_package(NCCL REQUIRED) -> QUIET, fall back to a bundled
+  stub static library (cmake/nccl-stub) exposed as NCCL::NCCL. Safe because
+  every NCCL call site only runs when num_gpu > 1; the stub aborts loudly
+  if ever invoked at runtime. Also add -DFMT_UNICODE=0 to CUDA flags (nvcc
+  builds fmt without MSVC /utf-8).
+- cmake/nccl-stub: minimal nccl.h subset + aborting implementations.
+- nccl_gbdt.hpp: guard unused <pthread.h> include with !_WIN32.
+- meta.h: const -> constexpr for device-code constants (required by nvcc 13.x).
+- cuda_single_gpu_tree_learner.cpp: fix std::max(size_t, unsigned long)
+  ambiguity on Win64 with newer MSVC.
+- fmt submodule: replace U"" char32_t literal with an int array (nvcc EDG
+  rejects large char32_t string literal values).
+---
+ CMakeLists.txt                                |  17 ++-
+ cmake/nccl-stub/nccl.h                        | 110 ++++++++++++++++++
+ cmake/nccl-stub/nccl_stub.cpp                 | 103 ++++++++++++++++
+ external_libs/fmt                             |   2 +-
+ include/LightGBM/meta.h                       |   9 +-
+ src/boosting/cuda/nccl_gbdt.hpp               |   4 +
+ .../cuda/cuda_single_gpu_tree_learner.cpp     |   8 +-
+ 7 files changed, 243 insertions(+), 10 deletions(-)
+ create mode 100644 cmake/nccl-stub/nccl.h
+ create mode 100644 cmake/nccl-stub/nccl_stub.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 109975cf..cd51d3b3 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -240,9 +240,22 @@ if(__INTEGRATE_OPENCL)
+ endif()
+ 
+ if(USE_CUDA)
+-    find_package(NCCL REQUIRED)
++    find_package(NCCL QUIET)
++    if(NOT NCCL_FOUND)
++      # NCCL has no official Windows distribution. Every NCCL call site in
++      # LightGBM is only reached when num_gpu > 1 (Boosting::CreateBoosting),
++      # so a bundled stub is safe for single-GPU CUDA builds: it satisfies
++      # the compiler and linker, and aborts loudly if ever called at runtime.
++      add_library(lightgbm_nccl_stub STATIC ${PROJECT_SOURCE_DIR}/cmake/nccl-stub/nccl_stub.cpp)
++      target_include_directories(lightgbm_nccl_stub PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
++      add_library(NCCL::NCCL ALIAS lightgbm_nccl_stub)
++      # global include dir so that every object library (lightgbm_objs,
++      # lightgbm_capi_objs, ...) can include <nccl.h> via cuda_utils.hu
++      include_directories(${PROJECT_SOURCE_DIR}/cmake/nccl-stub)
++      message(STATUS "NCCL not found - using bundled stub library (single-GPU CUDA only)")
++    endif()
+     include_directories(${CUDAToolkit_INCLUDE_DIRS})
+-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS} -Xcompiler=-fPIC -Xcompiler=-Wall")
++    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS} -Xcompiler=-fPIC -Xcompiler=-Wall -DFMT_UNICODE=0")
+     if(USE_DEBUG)
+       set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -g")
+     else()
+diff --git a/cmake/nccl-stub/nccl.h b/cmake/nccl-stub/nccl.h
+new file mode 100644
+index 00000000..e685553e
+--- /dev/null
++++ b/cmake/nccl-stub/nccl.h
+@@ -0,0 +1,110 @@
++/*!
++ * Minimal single-header stub of NVIDIA's <nccl.h> for LightGBM.
++ *
++ * Why this exists: NCCL has no official Windows distribution, but since the
++ * multi-GPU CUDA feature (#6138) LightGBM's CMake unconditionally requires
++ * the NCCL library even for single-GPU builds. Every NCCL call site in
++ * LightGBM is only reached when `num_gpu > 1` (see Boosting::CreateBoosting
++ * in src/boosting/boosting.cpp), and single-GPU training keeps
++ * `nccl_communicator_ == nullptr` and skips all NCCL branches at runtime.
++ *
++ * This stub therefore only needs to satisfy the compiler and the linker.
++ * The companion nccl_stub.cpp aborts loudly if any NCCL entry point is ever
++ * called, so an accidental multi-GPU configuration fails fast instead of
++ * silently producing wrong results.
++ *
++ * The ncclUniqueId layout keeps NCCL_UNIQUE_ID_BYTES == 128, matching the
++ * real NCCL header, because LightGBM scatters it via Network::Allgather
++ * using sizeof(ncclUniqueId).
++ */
++#ifndef NCCL_STUB_H_
++#define NCCL_STUB_H_
++
++#include <cuda_runtime.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#define NCCL_MAJOR(x) ((x) / 1000)
++#define NCCL_MINOR(x) (((x) / 100) % 10)
++#define NCCL_PATCH(x) ((x) % 100)
++#define NCCL_VERSION_CODE 2700
++#define NCCL_UNIQUE_ID_BYTES 128
++
++#define NCCL_UNIQUE_ID_BYTES 128
++
++typedef struct { char internal[NCCL_UNIQUE_ID_BYTES]; } ncclUniqueId;
++
++typedef struct ncclComm* ncclComm_t;
++
++typedef enum {
++  ncclSuccess = 0,
++  ncclUnhandledCudaError = 1,
++  ncclSystemError = 2,
++  ncclInternalError = 3,
++  ncclInvalidArgument = 4,
++  ncclInvalidUsage = 5,
++  ncclRemoteError = 6,
++  ncclInProgress = 7,
++  ncclNumResults = 8
++} ncclResult_t;
++
++typedef enum {
++  ncclInt8 = 0,
++  ncclChar = 0,
++  ncclUint8 = 1,
++  ncclInt32 = 2,
++  ncclInt = 2,
++  ncclUint32 = 3,
++  ncclInt64 = 4,
++  ncclUint64 = 5,
++  ncclFloat16 = 6,
++  ncclHalf = 6,
++  ncclFloat32 = 7,
++  ncclFloat = 7,
++  ncclFloat64 = 8,
++  ncclDouble = 8,
++  ncclBfloat16 = 9,
++  ncclNumTypes = 10
++} ncclDataType_t;
++
++typedef enum {
++  ncclSum = 0,
++  ncclProd = 1,
++  ncclMax = 2,
++  ncclMin = 3,
++  ncclAvg = 4,
++  ncclNumOps = 5
++} ncclRedOp_t;
++
++/* group collective scheduling */
++ncclResult_t ncclGroupStart(void);
++ncclResult_t ncclGroupEnd(void);
++ncclResult_t ncclGroupAbort(void);
++
++/* communicator bootstrap */
++ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId);
++ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
++ncclResult_t ncclCommInitAll(ncclComm_t* comms, int ndev, const int* devlist);
++ncclResult_t ncclCommDestroy(ncclComm_t comm);
++ncclResult_t ncclCommAbort(ncclComm_t comm);
++ncclResult_t ncclCommCount(const ncclComm_t comm, int* count);
++ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device);
++ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank);
++
++/* collectives used by LightGBM */
++ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
++                           ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
++                           cudaStream_t stream);
++ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count,
++                           ncclDataType_t datatype, int root, ncclComm_t comm,
++                           cudaStream_t stream);
++ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype,
++                      int peer, ncclComm_t comm, cudaStream_t stream);
++ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype,
++                      int peer, ncclComm_t comm, cudaStream_t stream);
++
++/* diagnostics */
++const char* ncclGetErrorString(ncclResult_t result);
++const char* ncclGetVersion(void);
++
++#endif  // NCCL_STUB_H_
+diff --git a/cmake/nccl-stub/nccl_stub.cpp b/cmake/nccl-stub/nccl_stub.cpp
+new file mode 100644
+index 00000000..907c6990
+--- /dev/null
++++ b/cmake/nccl-stub/nccl_stub.cpp
+@@ -0,0 +1,103 @@
++/*!
++ * Stub implementation of the NCCL entry points LightGBM can reference.
++ * See nccl.h for the rationale. Anything but ncclGetErrorString /
++ * ncclGetVersion aborts: these functions must never run on a single-GPU
++ * build, because LightGBM guards every NCCL branch with
++ * `nccl_communicator != nullptr`, which only becomes non-null when
++ * `num_gpu > 1`.
++ */
++#include <nccl.h>
++
++#include <cstdio>
++#include <cstdlib>
++
++static void nccl_stub_fail(const char* fn) {
++  std::fprintf(stderr,
++               "[LightGBM] FATAL: %s was called, but this is a stub-NCCL build "
++               "(single-GPU CUDA only). Multi-GPU training requires a real NCCL "
++               "build on Linux.\n", fn);
++  std::abort();
++}
++
++ncclResult_t ncclGroupStart(void) { nccl_stub_fail("ncclGroupStart"); return ncclSuccess; }
++ncclResult_t ncclGroupEnd(void) { nccl_stub_fail("ncclGroupEnd"); return ncclSuccess; }
++ncclResult_t ncclGroupAbort(void) { nccl_stub_fail("ncclGroupAbort"); return ncclSuccess; }
++
++ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
++  nccl_stub_fail("ncclGetUniqueId");
++  if (uniqueId != nullptr) { uniqueId->internal[0] = '\0'; }
++  return ncclSuccess;
++}
++
++ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
++  (void)commId;
++  nccl_stub_fail("ncclCommInitRank");
++  if (comm != nullptr) { *comm = nullptr; }
++  (void)nranks; (void)rank;
++  return ncclSuccess;
++}
++
++ncclResult_t ncclCommInitAll(ncclComm_t* comms, int ndev, const int* devlist) {
++  nccl_stub_fail("ncclCommInitAll");
++  if (comms != nullptr) { for (int i = 0; i < ndev; ++i) { comms[i] = nullptr; } }
++  (void)devlist;
++  return ncclSuccess;
++}
++
++ncclResult_t ncclCommDestroy(ncclComm_t comm) { nccl_stub_fail("ncclCommDestroy"); (void)comm; return ncclSuccess; }
++ncclResult_t ncclCommAbort(ncclComm_t comm) { nccl_stub_fail("ncclCommAbort"); (void)comm; return ncclSuccess; }
++
++ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
++  nccl_stub_fail("ncclCommCount"); (void)comm;
++  if (count != nullptr) { *count = 0; }
++  return ncclSuccess;
++}
++
++ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device) {
++  nccl_stub_fail("ncclCommCuDevice"); (void)comm;
++  if (device != nullptr) { *device = -1; }
++  return ncclSuccess;
++}
++
++ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
++  nccl_stub_fail("ncclCommUserRank"); (void)comm;
++  if (rank != nullptr) { *rank = -1; }
++  return ncclSuccess;
++}
++
++ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
++                           ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
++                           cudaStream_t stream) {
++  nccl_stub_fail("ncclAllReduce");
++  (void)sendbuff; (void)recvbuff; (void)count; (void)datatype; (void)op; (void)comm; (void)stream;
++  return ncclSuccess;
++}
++
++ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count,
++                           ncclDataType_t datatype, int root, ncclComm_t comm,
++                           cudaStream_t stream) {
++  nccl_stub_fail("ncclBroadcast");
++  (void)sendbuff; (void)recvbuff; (void)count; (void)datatype; (void)root; (void)comm; (void)stream;
++  return ncclSuccess;
++}
++
++ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype,
++                      int peer, ncclComm_t comm, cudaStream_t stream) {
++  nccl_stub_fail("ncclSend");
++  (void)sendbuff; (void)count; (void)datatype; (void)peer; (void)comm; (void)stream;
++  return ncclSuccess;
++}
++
++ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype,
++                      int peer, ncclComm_t comm, cudaStream_t stream) {
++  nccl_stub_fail("ncclRecv");
++  (void)recvbuff; (void)count; (void)datatype; (void)peer; (void)comm; (void)stream;
++  return ncclSuccess;
++}
++
++const char* ncclGetErrorString(ncclResult_t result) {
++  (void)result;
++  return "stub NCCL build (single-GPU only)";
++}
++
++const char* ncclGetVersion(void) { return "2.27.0-stub"; }
+diff --git a/external_libs/fmt b/external_libs/fmt
+index 8303d140..167f8a93 160000
+--- a/external_libs/fmt
++++ b/external_libs/fmt
+@@ -1 +1 @@
+-Subproject commit 8303d140a1a11f19b982a9f664bbe59a1ccda3f4
++Subproject commit 167f8a93083d8748dabb24741078b94a424848e9
+diff --git a/include/LightGBM/meta.h b/include/LightGBM/meta.h
+index a46645c6..1cb50a0e 100644
+--- a/include/LightGBM/meta.h
++++ b/include/LightGBM/meta.h
+@@ -48,13 +48,14 @@ typedef double label_t;
+ typedef float label_t;
+ #endif
+ 
+-const score_t kMinScore = -std::numeric_limits<score_t>::infinity();
++// constexpr (not just const) so that nvcc can inline the values in device code
++constexpr score_t kMinScore = -std::numeric_limits<score_t>::infinity();
+ 
+-const score_t kMaxScore = std::numeric_limits<score_t>::infinity();
++constexpr score_t kMaxScore = std::numeric_limits<score_t>::infinity();
+ 
+-const score_t kEpsilon = 1e-15f;
++constexpr score_t kEpsilon = 1e-15f;
+ 
+-const double kZeroThreshold = 1e-35f;
++constexpr double kZeroThreshold = 1e-35f;
+ 
+ 
+ typedef int32_t comm_size_t;
+diff --git a/src/boosting/cuda/nccl_gbdt.hpp b/src/boosting/cuda/nccl_gbdt.hpp
+index 75563b82..2859e20f 100644
+--- a/src/boosting/cuda/nccl_gbdt.hpp
++++ b/src/boosting/cuda/nccl_gbdt.hpp
+@@ -9,7 +9,11 @@
+ 
+ #ifdef USE_CUDA
+ 
++// pthread.h is not needed by this header (threads use std::thread) and does
++// not exist on Windows, where LightGBM is built with the stub NCCL library.
++#ifndef _WIN32
+ #include <pthread.h>
++#endif
+ 
+ #include <LightGBM/objective_function.h>
+ #include <LightGBM/network.h>
+diff --git a/src/treelearner/cuda/cuda_single_gpu_tree_learner.cpp b/src/treelearner/cuda/cuda_single_gpu_tree_learner.cpp
+index 54beeb99..2f60e0b3 100644
+--- a/src/treelearner/cuda/cuda_single_gpu_tree_learner.cpp
++++ b/src/treelearner/cuda/cuda_single_gpu_tree_learner.cpp
+@@ -562,9 +562,11 @@ void CUDASingleGPUTreeLearner::AllocateBitset() {
+         max_cat_num_bin = std::max(bin_mapper->num_bin(), max_cat_num_bin);
+       }
+     }
+-    // std::max(..., 1UL) to avoid error in the case when there are NaN's in the categorical values
+-    const size_t cuda_bitset_max_size = std::max(static_cast<size_t>((max_cat_value + 31) / 32), 1UL);
+-    const size_t cuda_bitset_inner_max_size = std::max(static_cast<size_t>((max_cat_num_bin + 31) / 32), 1UL);
++    // std::max(..., 1) to avoid error in the case when there are NaN's in the categorical values;
++    // both operands cast to size_t because on Win64 unsigned long is 32-bit and newer
++    // MSVC rejects std::max with mismatched argument types
++    const size_t cuda_bitset_max_size = std::max(static_cast<size_t>((max_cat_value + 31) / 32), static_cast<size_t>(1));
++    const size_t cuda_bitset_inner_max_size = std::max(static_cast<size_t>((max_cat_num_bin + 31) / 32), static_cast<size_t>(1));
+     AllocateCUDAMemory<uint32_t>(&cuda_bitset_, cuda_bitset_max_size, __FILE__, __LINE__);
+     AllocateCUDAMemory<uint32_t>(&cuda_bitset_inner_, cuda_bitset_inner_max_size, __FILE__, __LINE__);
+     const int max_cat_in_split = std::min(config_->max_cat_threshold, max_cat_num_bin / 2);
+-- 
+2.55.0.windows.4
+
