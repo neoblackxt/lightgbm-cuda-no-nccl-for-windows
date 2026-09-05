@@ -36,7 +36,7 @@ jobs:
 
       - name: Install CUDA Toolkit ${{ matrix.cuda_version }}
         id: cudatoolkit
-        uses: Jimver/cuda-toolkit@v0.2.24
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: ${{ matrix.cuda_version }}
           method: local
