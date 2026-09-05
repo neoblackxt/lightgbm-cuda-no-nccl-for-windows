@@ -9,7 +9,7 @@
 > distribution. Since every NCCL call site only runs with `num_gpu > 1`,
 > we bundle a tiny NCCL **stub** library (`cmake/nccl-stub/`) that satisfies
 > the linker and aborts loudly if ever invoked — no upstream code is removed.
-> See `patches/README.md` for details.
+> See `patches/README.md` (English) and `patches/README.zh.md` (中文) for details.
 >
 > **Two prebuilt variants** are published by GitHub Actions on every `v*` tag
 > (see the [Releases](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases) page):
