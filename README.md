@@ -92,7 +92,9 @@
 > - Take-away: on small datasets the GPU advantage is marginal (data
 >   transfer overhead dominates); at realistic scale both GPU back-ends
 >   give a ~4x speed-up and CUDA/OpenCL are close on a consumer card.
-> - Prediction below was CPU-side for all devices (~0.25 s / 1M rows).
+> - Prediction runs on the CPU in all three cases (LightGBM does not
+>   accelerate `predict` on GPU by default): ~0.25 s per 1M rows and
+>   ~0.55 s per 2M×100 rows, identical across devices within noise.
 >
 > ### Switching devices (Python)
 >
