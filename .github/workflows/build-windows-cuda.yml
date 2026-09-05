@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: boost_1_85_0
-          key: boost-1.85.0-b2-msvc-static-md
+          key: boost-1.85.0-b2-msvc145-static-md-v2
 
       - name: Download & build Boost 1.85
         if: matrix.variant == 'cuda-opencl' && steps.cache-boost.outputs.cache-hit != 'true'
@@ -65,7 +65,10 @@ jobs:
           tar -xzf boost.tar.gz
           cd boost_1_85_0
           call bootstrap.bat msvc
-          b2 -q -j%NUMBER_OF_PROCESSORS% toolset=msvc --with-filesystem --with-system link=static runtime-link=shared variant=release threading=multi address-model=64 stage
+          rem b2 1.85 does not know VS2026's toolset (falls back to msvc-6.0);
+          rem declare it explicitly and reuse the MSVC env activated earlier
+          (echo using msvc : 14.5 : "cl" ;)>user-config.jam
+          b2 -q -j%NUMBER_OF_PROCESSORS% toolset=msvc-14.5 --user-config=user-config.jam --with-filesystem --with-system link=static runtime-link=shared variant=release threading=multi address-model=64 stage
 
       - name: Build CLI
         shell: bash
