@@ -251,6 +251,8 @@ jobs:
             orig=$(ls dist/lightgbm-*.whl); ver=$(basename "$orig" .whl | cut -d- -f2)
             mv "$orig" "dist/lightgbm-${ver}+all-py3-none-win_amd64.whl"
           fi
+          # wheels must land in release_assets or the release job never sees them
+          cp dist/*.whl release_assets/
 
       - name: Smoke test wheel
         shell: bash
@@ -325,4 +327,5 @@ jobs:
               ⚠️ switch `device` on a fresh Dataset (reusing one Dataset across CPU→CUDA raises an upstream limitation).
 
             Wheels carry a local version tag: `+all` marks the CPU+OpenCL+CUDA variant.
-          generate_release_notes: true
+
+            **Full Changelog**: [${{ github.ref_name }}](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/commits/${{ github.ref_name }})
