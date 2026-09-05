@@ -1,9 +1,9 @@
 <img src=https://github.com/lightgbm-org/LightGBM/blob/main/docs/logo/LightGBM_logo_black_text.svg width=300 />
 
 > [!IMPORTANT]
-> ## Windows CUDA build (no NCCL) — patch set by @neoblackxt
+> ## Windows CUDA build (no NCCL)
 >
-> This is a fork of LightGBM carrying a minimal patch set that makes
+> A community fork of LightGBM carrying a minimal patch set that makes
 > **single-GPU CUDA builds work on Windows**. Upstream requires the NCCL
 > library for *all* CUDA builds since #6138, but NCCL has no Windows
 > distribution. Since every NCCL call site only runs with `num_gpu > 1`,
