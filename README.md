@@ -11,10 +11,29 @@
 > the linker and aborts loudly if ever invoked — no upstream code is removed.
 > See `patches/README.md` for details.
 >
-> **Prebuilt Windows binaries** (CLI `lightgbm.exe`, `lib_lightgbm.dll`, and a
-> CUDA-enabled Python wheel) are published by GitHub Actions on every `v*` tag
-> — check the [Releases](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases) page.
-> Training usage: `device="cuda"` (single GPU, `num_gpu=1`).
+> **Two prebuilt variants** are published by GitHub Actions on every `v*` tag
+> (see the [Releases](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases) page):
+>
+> | Variant | Files | `device` options |
+> |---|---|---|
+> | CUDA (recommended) | `lightgbm.exe`, `lib_lightgbm.dll`, `lightgbm-*.py3-none-win_amd64.whl` | `cpu`, `cuda` |
+> | All-in-one | `all-lightgbm.exe`, `all-lib_lightgbm.dll`, `lightgbm-*+all-*.whl` | `cpu`, `cuda`, `gpu` (OpenCL) |
+>
+> ### Switching devices (Python)
+>
+> ```python
+> params = {"objective": "binary", "device": "cuda"}   # NVIDIA CUDA
+> params = {"objective": "binary", "device": "gpu"}    # OpenCL (all-in-one wheel only)
+> params = {"objective": "binary", "device": "cpu"}    # CPU (always available)
+> # sklearn: LGBMClassifier(device="cuda")
+> ```
+>
+> Notes:
+> - No CUDA Toolkit install needed (statically linked runtime); just a recent NVIDIA driver.
+> - Switch `device` on a **fresh Dataset**: reusing one `lgb.Dataset` that was already
+>   trained on CPU and then training with `device="cuda"` raises an upstream limitation.
+> - The OpenCL path (`device="gpu"`) computes sparse feature groups on the CPU
+>   (hybrid mode); the CUDA path requires dense data.
 
 > [!NOTE]
 > This project moved from `Microsoft/LightGBM` to `lightgbm-org/LightGBM` in March 2026.

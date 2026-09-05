@@ -1,7 +1,8 @@
 name: Build Windows CUDA (no NCCL)
 
-# Builds the CUDA-enabled LightGBM CLI + Python wheel for Windows and
-# publishes them as prebuilt release assets on v* tags.
+# Builds two Windows variants and publishes them as prebuilt release assets on v* tags:
+#   cuda        - CPU + CUDA
+#   cuda-opencl - CPU + OpenCL + CUDA (all-in-one, switchable via device= param)
 
 on:
   push:
@@ -19,12 +20,14 @@ env:
   CUDAARCHS: "75;80;86;89;120"
 
 jobs:
-  build-windows-cuda:
+  build:
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        cuda_version: ['13.3.0']
+        include:
+          - variant: cuda
+          - variant: cuda-opencl
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,36 +37,60 @@ jobs:
       - name: Activate MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Install CUDA Toolkit ${{ matrix.cuda_version }}
+      - name: Install CUDA Toolkit 13.3
         id: cudatoolkit
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          cuda: ${{ matrix.cuda_version }}
+          cuda: '13.3.0'
           method: local
           use-github-cache: true
 
-      - name: Show toolchain versions
-        shell: cmd
-        run: |
-          nvcc --version
-          cmake --version
-          ninja --version
+      - name: Cache Boost (static /MD, filesystem+system)
+        if: matrix.variant == 'cuda-opencl'
+        id: cache-boost
+        uses: actions/cache@v4
+        with:
+          path: boost_1_85_0
+          key: boost-1.85.0-win-vc-static-md
 
-      - name: Build CLI (lightgbm.exe + lib_lightgbm.dll)
+      - name: Download & build Boost
+        if: matrix.variant == 'cuda-opencl' && steps.cache-boost.outputs.cache-hit != 'true'
         shell: cmd
         run: |
-          cmake -S . -B build -G Ninja ^
-            -DCMAKE_BUILD_TYPE=Release ^
-            -DUSE_CUDA=ON ^
-            -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDAARCHS }}" ^
-            -DCMAKE_CUDA_COMPILER="%CUDA_PATH%\bin\nvcc.exe"
+          curl -fsSL -o boost.tar.gz https://archives.boost.io/release/1.85.0/source/boost_1_85_0.tar.gz
+          tar -xzf boost.tar.gz
+          cd boost_1_85_0
+          call bootstrap.bat
+          b2 -q -j%NUMBER_OF_PROCESSORS% --with-filesystem --with-system link=static runtime-link=shared variant=release threading=multi address-model=64 stage
+
+      - name: Build CLI
+        shell: bash
+        run: |
+          BOOST_ARGS=()
+          if [ "${{ matrix.variant }}" = "cuda-opencl" ]; then
+            BOOST_ARGS=(-DUSE_GPU=ON
+              -DBOOST_ROOT="$GITHUB_WORKSPACE/boost_1_85_0"
+              -DBoost_DIR="$GITHUB_WORKSPACE/boost_1_85_0/stage/lib/cmake/Boost-1.85.0"
+              -DOpenCL_INCLUDE_DIR="$CUDA_PATH/include"
+              -DOpenCL_LIBRARY="$CUDA_PATH/lib/x64/OpenCL.lib")
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES="${CUDAARCHS}" \
+            -DCMAKE_CUDA_COMPILER="$CUDA_PATH/bin/nvcc.exe" \
+            "${BOOST_ARGS[@]}"
           cmake --build build -j
-          rem stash binaries immediately: build-python.sh later runs
-          rem "rm -rf ./lightgbm" which (via Git Bash) also deletes lightgbm.exe
-          mkdir release_assets
-          copy /y lightgbm.exe release_assets\
-          copy /y lib_lightgbm.dll release_assets\
-          dir release_assets
+          # stash binaries immediately: build-python.sh later runs
+          # "rm -rf ./lightgbm" which (via Git Bash) also deletes lightgbm.exe
+          mkdir -p release_assets
+          if [ "${{ matrix.variant }}" = "cuda-opencl" ]; then
+            cp lightgbm.exe release_assets/all-lightgbm.exe
+            cp lib_lightgbm.dll release_assets/all-lib_lightgbm.dll
+          else
+            cp lightgbm.exe lib_lightgbm.dll release_assets/
+          fi
+          ls -la release_assets
 
       - name: Build Python wheel
         shell: bash
@@ -72,10 +99,23 @@ jobs:
           CUDACXX: ${{ steps.cudatoolkit.outputs.CUDA_PATH }}\bin\nvcc.exe
         run: |
           python -m pip install --upgrade pip build scikit-build-core ninja
-          sh build-python.sh bdist_wheel --cuda --no-isolation
+          WHEEL_ARGS=()
+          if [ "${{ matrix.variant }}" = "cuda-opencl" ]; then
+            WHEEL_ARGS=(--gpu
+              "--boost-root=$GITHUB_WORKSPACE/boost_1_85_0"
+              "--boost-dir=$GITHUB_WORKSPACE/boost_1_85_0/stage/lib/cmake/Boost-1.85.0"
+              "--opencl-include-dir=$CUDA_PATH/include"
+              "--opencl-library=$CUDA_PATH/lib/x64/OpenCL.lib")
+          fi
+          sh build-python.sh bdist_wheel --cuda "${WHEEL_ARGS[@]}" --no-isolation
           ls dist/
+          if [ "${{ matrix.variant }}" = "cuda-opencl" ]; then
+            # local version segment so both variants can coexist on PyPI-less installs
+            orig=$(ls dist/lightgbm-*.whl); ver=$(basename "$orig" .whl | cut -d- -f2)
+            mv "$orig" "dist/lightgbm-${ver}+all-py3-none-win_amd64.whl"
+          fi
 
-      - name: Smoke test wheel (CPU training on GPU-less runner)
+      - name: Smoke test wheel
         shell: bash
         run: |
           python -m pip install dist/lightgbm*.whl
@@ -88,39 +128,61 @@ jobs:
           bst = lgb.train({"objective": "binary", "num_leaves": 15, "verbose": -1},
                           lgb.Dataset(X, label=y), num_boost_round=10)
           assert bst.predict(X[:10]).shape == (10,)
+          # GPU learners must be compiled in. On this GPU-less runner selecting
+          # them fails at runtime; the error must NOT say "was not enabled".
+          for dev in ("cuda", "gpu"):
+              try:
+                  lgb.train({"objective": "binary", "device": dev, "verbose": -1},
+                            lgb.Dataset(X, label=y), num_boost_round=1)
+                  print(f"[{dev}] trained (GPU present on runner)")
+              except Exception as e:
+                  msg = str(e)
+                  assert "not enabled" not in msg, f"[{dev}] learner missing: {msg}"
+                  print(f"[{dev}] learner compiled in; GPU-less runtime error: {msg.strip()[:80]}")
           print("SMOKE_OK")
           PY
 
-      - name: Collect artifacts
-        shell: pwsh
-        run: |
-          # binaries were stashed to release_assets right after the CLI build
-          # (build-python.sh's "rm -rf ./lightgbm" deletes lightgbm.exe)
-          Copy-Item dist/*.whl release_assets/
-          Get-ChildItem release_assets
-
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-cuda-${{ matrix.cuda_version }}
+          name: windows-${{ matrix.variant }}
           path: release_assets/*
           if-no-files-found: error
 
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: rel
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release_assets/lib_lightgbm.dll
-            release_assets/lightgbm.exe
-            release_assets/*.whl
+            rel/lightgbm.exe
+            rel/lib_lightgbm.dll
+            rel/all-lightgbm.exe
+            rel/all-lib_lightgbm.dll
+            rel/*.whl
           body: |
-            Prebuilt LightGBM Windows binaries with **CUDA support (single GPU, no NCCL)**.
+            Prebuilt LightGBM Windows binaries. **No NCCL** — all GPU code paths are single-GPU (`num_gpu=1`).
 
-            - CUDA Toolkit: ${{ matrix.cuda_version }}
-            - GPU architectures: ${{ env.CUDAARCHS }}
-            - Usage: `params['device'] = 'cuda'` (Python) or `device = cuda` (CLI config)
+            ## Pick your variant
 
-            The wheel is built with statically linked CUDA runtime — no CUDA
-            Toolkit installation is needed to use it; only an NVIDIA driver
-            new enough for CUDA ${{ matrix.cuda_version }}.
+            | Files | Device options | Use when |
+            |---|---|---|
+            | `lightgbm.exe`, `lib_lightgbm.dll`, `lightgbm-*.py3-none-win_amd64.whl` | `cpu`, `cuda` | Standard NVIDIA GPU setup (recommended) |
+            | `all-lightgbm.exe`, `all-lib_lightgbm.dll`, `lightgbm-*+all-*.whl` | `cpu`, `cuda`, `gpu` (OpenCL) | Also need the OpenCL GPU version (e.g. dense data on old GPUs; sparse features are CPU-fallback there) |
+
+            - CUDA Toolkit 13.3, GPU architectures: ${{ env.CUDAARCHS }} (Turing → Blackwell)
+            - CUDA runtime statically linked — no CUDA Toolkit install needed, just a recent NVIDIA driver
+            - Usage: `device = cpu` / `cuda` / `gpu` in params.
+              ⚠️ switch `device` on a fresh Dataset (reusing one Dataset across CPU→CUDA raises an upstream limitation).
+
+            Wheels carry a local version tag: `+all` marks the CPU+OpenCL+CUDA variant.
           generate_release_notes: true
