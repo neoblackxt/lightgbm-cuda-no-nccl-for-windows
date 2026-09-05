@@ -38,9 +38,9 @@ jobs:
       - name: Activate MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Cache CUDA Toolkit (installed dir)
+      - name: Restore CUDA Toolkit cache
         id: cache-cuda
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
           key: cuda-13.3.0-windows-x64-installed-v1
@@ -53,6 +53,17 @@ jobs:
           method: local
           use-github-cache: false
 
+      - name: Save CUDA Toolkit cache
+        # save right after install: actions/cache's post-save is skipped when any
+        # later step fails (post-if: success()), which is why the cache never
+        # populated before
+        if: steps.cache-cuda.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
+          key: cuda-13.3.0-windows-x64-installed-v1
+        continue-on-error: true
+
       - name: Set CUDA environment
         shell: pwsh
         run: |
@@ -64,10 +75,10 @@ jobs:
           echo "CUDA_PATH=$cuda" >> $env:GITHUB_ENV
           echo "$cuda\bin" >> $env:GITHUB_PATH
 
-      - name: Cache Boost 1.85 (b2 static /MD)
+      - name: Restore Boost cache
         if: matrix.variant == 'cuda-opencl'
         id: cache-boost
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: boost_1_85_0
           key: boost-1.85.0-b2-msvc145-static-md-v5
@@ -89,6 +100,14 @@ jobs:
           rem Syntax verified locally against the same b2 1.85 + VS2026 combination.
           (echo using msvc : 14.5 : "%VCToolsInstallDir%bin\Hostx64\x64\cl.exe" : ^<setup^>"%VCINSTALLDIR%Auxiliary\Build\vcvarsall.bat" ;)>project-config.jam
           b2 -q -j%NUMBER_OF_PROCESSORS% toolset=msvc-14.5 --with-filesystem --with-system link=static runtime-link=shared variant=release threading=multi address-model=64 stage
+
+      - name: Save Boost cache
+        if: matrix.variant == 'cuda-opencl' && steps.cache-boost.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: boost_1_85_0
+          key: boost-1.85.0-b2-msvc145-static-md-v5
+        continue-on-error: true
 
       - name: Build CLI
         shell: bash
@@ -144,29 +163,32 @@ jobs:
 
       - name: Smoke test wheel
         shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
           python -m pip install dist/lightgbm*.whl
           python - <<'PY'
-          import numpy as np, lightgbm as lgb
+          import os
+          import numpy as np
+          import lightgbm as lgb
           print("lightgbm", lgb.__version__)
+          # GPU learners must NOT be executed here: this runner has no GPU and
+          # CUDA init fatals process-wide (exit 127, not catchable from Python).
+          # Instead verify the learners are COMPILED IN via binary strings —
+          # the "was not enabled" stub text only exists in binaries built
+          # without the respective learner.
+          dll = open(lgb.basic._LIB._name, "rb").read()
+          assert b"CUDA Tree Learner was not enabled" not in dll, "CUDA learner missing"
+          has_opencl = os.environ["VARIANT"] == "cuda-opencl"
+          if has_opencl:
+              assert b"GPU Tree Learner was not enabled" not in dll, "OpenCL learner missing"
           rng = np.random.RandomState(0)
           X = rng.randn(2000, 10).astype(np.float32)
           y = (X[:, 0] > 0).astype(np.int32)
           bst = lgb.train({"objective": "binary", "num_leaves": 15, "verbose": -1},
                           lgb.Dataset(X, label=y), num_boost_round=10)
           assert bst.predict(X[:10]).shape == (10,)
-          # GPU learners must be compiled in. On this GPU-less runner selecting
-          # them fails at runtime; the error must NOT say "was not enabled".
-          for dev in ("cuda", "gpu"):
-              try:
-                  lgb.train({"objective": "binary", "device": dev, "verbose": -1},
-                            lgb.Dataset(X, label=y), num_boost_round=1)
-                  print(f"[{dev}] trained (GPU present on runner)")
-              except Exception as e:
-                  msg = str(e)
-                  assert "not enabled" not in msg, f"[{dev}] learner missing: {msg}"
-                  print(f"[{dev}] learner compiled in; GPU-less runtime error: {msg.strip()[:80]}")
-          print("SMOKE_OK")
+          print("SMOKE_OK  (cpu trained; learners compiled in: cuda=True opencl=%s)" % has_opencl)
           PY
 
       - uses: actions/upload-artifact@v4
