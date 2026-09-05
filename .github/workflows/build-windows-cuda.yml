@@ -15,8 +15,10 @@ permissions:
   contents: write
 
 env:
-  # Consumer NVIDIA GPUs only: 89=Ada (RTX 40 series incl. 4090), 120=Blackwell (RTX 50 series)
-  CUDAARCHS: "89;120"
+  # Consumer NVIDIA GPUs, Turing and newer: 75=GTX16/RTX20, 80/86=RTX30, 89=RTX40 (4090), 120=RTX50.
+  # (Pascal/GTX 10-series was removed from the CUDA 13 toolchain; those users take the
+  #  all-in-one variant and run device=gpu (OpenCL), which is architecture-agnostic.)
+  CUDAARCHS: "75;80;86;89;120"
 
 jobs:
   build:
