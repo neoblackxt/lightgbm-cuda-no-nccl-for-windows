@@ -46,32 +46,35 @@ jobs:
           method: local
           use-github-cache: true
 
-      - name: Cache Boost (vcpkg static /MD)
+      - name: Cache Boost 1.85 (b2 static /MD)
         if: matrix.variant == 'cuda-opencl'
         id: cache-boost
         uses: actions/cache@v4
         with:
-          path: C:\vcpkg\installed
-          key: vcpkg-boost-fs-compute-x64-windows-static-md
+          path: boost_1_85_0
+          key: boost-1.85.0-b2-msvc-static-md
 
-      - name: Install Boost via vcpkg (static /MD)
-        if: matrix.variant == 'cuda-opencl'
-        shell: pwsh
+      - name: Download & build Boost 1.85
+        if: matrix.variant == 'cuda-opencl' && steps.cache-boost.outputs.cache-hit != 'true'
+        shell: cmd
         run: |
-          # boost-compute (header-only) pulls every header dependency that the
-          # bundled external_libs/compute headers include (algorithm/string, ...)
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-compute:x64-windows-static-md boost-filesystem:x64-windows-static-md
-          Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib" -Filter "*boost*" | Select-Object Name
+          rem Boost 1.85 matches the locally verified toolchain; newer Boost (1.89+,
+          rem e.g. vcpkg 1.92) changed boost::uuids sha1's get_digest signature, which
+          rem breaks LightGBM's bundled Boost.Compute headers.
+          curl -fsSL -o boost.tar.gz https://archives.boost.io/release/1.85.0/source/boost_1_85_0.tar.gz
+          tar -xzf boost.tar.gz
+          cd boost_1_85_0
+          call bootstrap.bat msvc
+          b2 -q -j%NUMBER_OF_PROCESSORS% toolset=msvc --with-filesystem --with-system link=static runtime-link=shared variant=release threading=multi address-model=64 stage
 
       - name: Build CLI
         shell: bash
         run: |
           BOOST_ARGS=()
           if [ "${{ matrix.variant }}" = "cuda-opencl" ]; then
-            VCPKG_INST="$VCPKG_INSTALLATION_ROOT/installed/x64-windows-static-md"
             BOOST_ARGS=(-DUSE_GPU=ON
-              -DBOOST_ROOT="$VCPKG_INST"
-              -DBoost_DIR="$VCPKG_INST/share/boost"
+              -DBOOST_ROOT="$GITHUB_WORKSPACE/boost_1_85_0"
+              -DBoost_DIR="$GITHUB_WORKSPACE/boost_1_85_0/stage/lib/cmake/Boost-1.85.0"
               -DOpenCL_INCLUDE_DIR="$CUDA_PATH/include"
               -DOpenCL_LIBRARY="$CUDA_PATH/lib/x64/OpenCL.lib")
           fi

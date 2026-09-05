@@ -41,6 +41,22 @@
 >   list; edit `CUDAARCHS` in `.github/workflows/build-windows-cuda.yml` and
 >   re-tag to add them.
 >
+> ### Local benchmark (RTX 4090, 16 threads, 100 boosting rounds)
+>
+> One all-in-one binary, three `device` values, dense synthetic data
+> (`num_leaves=127`, `max_bin=255`, best of 2 runs after warm-up):
+>
+> | Dataset | CPU | CUDA | OpenCL | GPU speed-up vs CPU |
+> |---|---|---|---|---|
+> | 1M x 50 | 34.3 ms/round (3.43 s) | 30.1 ms/round (3.01 s) | **25.6 ms/round (2.56 s)** | 1.1 – 1.3x |
+> | 2M x 100 | 165.7 ms/round (16.6 s) | **38.8 ms/round (3.88 s)** | 40.1 ms/round (4.01 s) | **~4.3x** |
+>
+> - Identical training accuracy on all three devices (0.952 / 0.953).
+> - Take-away: on small datasets the GPU advantage is marginal (data
+>   transfer overhead dominates); at realistic scale both GPU back-ends
+>   give a ~4x speed-up and CUDA/OpenCL are close on a consumer card.
+> - Prediction below was CPU-side for all devices (~0.25 s / 1M rows).
+>
 > ### Switching devices (Python)
 >
 > ```python
