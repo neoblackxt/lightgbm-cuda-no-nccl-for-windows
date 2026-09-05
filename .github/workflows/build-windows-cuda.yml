@@ -21,9 +21,38 @@ env:
   CUDAARCHS: "75;80;86;89;120"
 
 jobs:
+  # Gate for main-branch pushes: skip the heavy pipeline when only docs
+  # changed. Tags / PRs / workflow_dispatch always build (job skipped there).
+  changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: 'HEAD~1'
+          filters: |
+            code:
+              - 'src/**'
+              - 'include/**'
+              - 'cmake/**'
+              - 'external_libs/**'
+              - 'CMakeLists.txt'
+              - 'python-package/**'
+              - '.github/workflows/build-windows-cuda.yml'
+
   # Primes the shared caches once per run: both build jobs then start warm.
   # Without this, a cold run installs CUDA twice (once per matrix job).
   prime:
+    needs: changes
+    if: >-
+      always() &&
+      (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: windows-latest
     steps:
       - name: Activate MSVC environment
@@ -80,7 +109,10 @@ jobs:
         continue-on-error: true
 
   build:
-    needs: prime
+    needs: [prime, changes]
+    if: >-
+      always() &&
+      (needs.changes.result == 'skipped' || needs.changes.outputs.code == 'true')
     runs-on: windows-latest
     strategy:
       fail-fast: false
