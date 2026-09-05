@@ -19,6 +19,43 @@
 > | CUDA (recommended) | `lightgbm.exe`, `lib_lightgbm.dll`, `lightgbm-*.py3-none-win_amd64.whl` | `cpu`, `cuda` |
 > | All-in-one | `all-lightgbm.exe`, `all-lib_lightgbm.dll`, `lightgbm-*+all-*.whl` | `cpu`, `cuda`, `gpu` (OpenCL) |
 >
+> ### Installation
+>
+> Grab the assets from the [latest release](https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases/latest)
+> (Windows 10/11 x64; Python 3.9+ for the wheels).
+>
+> **Python** — pick ONE wheel:
+>
+> ```bash
+> # CUDA variant (cpu + cuda):
+> pip install lightgbm-<version>-py3-none-win_amd64.whl
+>
+> # All-in-one variant (cpu + cuda + OpenCL):
+> pip install lightgbm-<version>+all-py3-none-win_amd64.whl
+> ```
+>
+> e.g. with pip directly from a release URL:
+>
+> ```bash
+> pip install https://github.com/neoblackxt/lightgbm-cuda-no-nccl-for-windows/releases/download/v4.7.0.99-cuda13.3/lightgbm-4.7.0.99+all-py3-none-win_amd64.whl
+> ```
+>
+> - If the official `lightgbm` is already installed, uninstall it first
+>   (`pip uninstall lightgbm`) or add `--force-reinstall` — the two variants
+>   of this fork also conflict with each other.
+> - **No CUDA Toolkit installation needed** (the CUDA runtime is statically
+>   linked); only the NVIDIA driver matters — see the hardware table below.
+> - Verify: `python -c "import lightgbm; print(lightgbm.__version__)"`
+>
+> **CLI / C API** — download the binaries and drop them anywhere in `PATH`:
+>
+> | File | What it is |
+> |---|---|
+> | `lightgbm.exe` / `all-lightgbm.exe` | standalone trainer: `lightgbm.exe config=train.conf` with `device = cuda` inside |
+> | `lib_lightgbm.dll` / `all-lib_lightgbm.dll` | C API library for native programs |
+>
+> The `all-` prefixed files are the all-in-one build; rename them as you like.
+>
 > ### Hardware compatibility
 >
 > CUDA mode is compiled for consumer NVIDIA GPUs, Turing and newer
