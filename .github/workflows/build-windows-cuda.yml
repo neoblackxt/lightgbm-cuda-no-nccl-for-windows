@@ -58,7 +58,12 @@ jobs:
             -DCMAKE_CUDA_ARCHITECTURES="${{ env.CUDAARCHS }}" ^
             -DCMAKE_CUDA_COMPILER="%CUDA_PATH%\bin\nvcc.exe"
           cmake --build build -j
-          dir build
+          rem stash binaries immediately: build-python.sh later runs
+          rem "rm -rf ./lightgbm" which (via Git Bash) also deletes lightgbm.exe
+          mkdir release_assets
+          copy /y lightgbm.exe release_assets\
+          copy /y lib_lightgbm.dll release_assets\
+          dir release_assets
 
       - name: Build Python wheel
         shell: bash
@@ -89,12 +94,8 @@ jobs:
       - name: Collect artifacts
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path release_assets
-          # Ninja build places outputs at the repo root (RUNTIME_OUTPUT_DIRECTORY)
-          if (Test-Path lib_lightgbm.dll) { Copy-Item lib_lightgbm.dll release_assets\ }
-          if (Test-Path lightgbm.exe)   { Copy-Item lightgbm.exe release_assets\ }
-          if (Test-Path build\lib_lightgbm.dll) { Copy-Item build\lib_lightgbm.dll release_assets\ }
-          if (Test-Path build\lightgbm.exe)     { Copy-Item build\lightgbm.exe release_assets\ }
+          # binaries were stashed to release_assets right after the CLI build
+          # (build-python.sh's "rm -rf ./lightgbm" deletes lightgbm.exe)
           Copy-Item dist/*.whl release_assets/
           Get-ChildItem release_assets
 
