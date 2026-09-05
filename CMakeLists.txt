@@ -240,9 +240,22 @@ if(__INTEGRATE_OPENCL)
 endif()
 
 if(USE_CUDA)
-    find_package(NCCL REQUIRED)
+    find_package(NCCL QUIET)
+    if(NOT NCCL_FOUND)
+      # NCCL has no official Windows distribution. Every NCCL call site in
+      # LightGBM is only reached when num_gpu > 1 (Boosting::CreateBoosting),
+      # so a bundled stub is safe for single-GPU CUDA builds: it satisfies
+      # the compiler and linker, and aborts loudly if ever called at runtime.
+      add_library(lightgbm_nccl_stub STATIC ${PROJECT_SOURCE_DIR}/cmake/nccl-stub/nccl_stub.cpp)
+      target_include_directories(lightgbm_nccl_stub PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+      add_library(NCCL::NCCL ALIAS lightgbm_nccl_stub)
+      # global include dir so that every object library (lightgbm_objs,
+      # lightgbm_capi_objs, ...) can include <nccl.h> via cuda_utils.hu
+      include_directories(${PROJECT_SOURCE_DIR}/cmake/nccl-stub)
+      message(STATUS "NCCL not found - using bundled stub library (single-GPU CUDA only)")
+    endif()
     include_directories(${CUDAToolkit_INCLUDE_DIRS})
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS} -Xcompiler=-fPIC -Xcompiler=-Wall")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler=${OpenMP_CXX_FLAGS} -Xcompiler=-fPIC -Xcompiler=-Wall -DFMT_UNICODE=0")
     if(USE_DEBUG)
       set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -g")
     else()
