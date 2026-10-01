@@ -29,7 +29,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
       - name: Detect code changes
@@ -60,7 +60,7 @@ jobs:
 
       - name: Restore CUDA Toolkit cache
         id: prime-cuda
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
           key: cuda-13.3.0-windows-x64-installed-v1
@@ -75,7 +75,7 @@ jobs:
 
       - name: Save CUDA Toolkit cache
         if: steps.prime-cuda.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
           key: cuda-13.3.0-windows-x64-installed-v1
@@ -83,7 +83,7 @@ jobs:
 
       - name: Restore Boost cache
         id: prime-boost
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: boost_1_85_0
           key: boost-1.85.0-b2-msvc145-static-md-v5
@@ -102,7 +102,7 @@ jobs:
 
       - name: Save Boost cache
         if: steps.prime-boost.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: boost_1_85_0
           key: boost-1.85.0-b2-msvc145-static-md-v5
@@ -121,7 +121,7 @@ jobs:
           - variant: cuda
           - variant: cuda-opencl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
           fetch-depth: 0
@@ -131,7 +131,7 @@ jobs:
 
       - name: Restore CUDA Toolkit cache
         id: cache-cuda
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
           key: cuda-13.3.0-windows-x64-installed-v1
@@ -149,7 +149,7 @@ jobs:
         # later step fails (post-if: success()), which is why the cache never
         # populated before
         if: steps.cache-cuda.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.3
           key: cuda-13.3.0-windows-x64-installed-v1
@@ -169,7 +169,7 @@ jobs:
       - name: Restore Boost cache
         if: matrix.variant == 'cuda-opencl'
         id: cache-boost
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: boost_1_85_0
           key: boost-1.85.0-b2-msvc145-static-md-v5
@@ -194,7 +194,7 @@ jobs:
 
       - name: Save Boost cache
         if: matrix.variant == 'cuda-opencl' && steps.cache-boost.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: boost_1_85_0
           key: boost-1.85.0-b2-msvc145-static-md-v5
@@ -284,7 +284,7 @@ jobs:
           print("SMOKE_OK  (cpu trained; learners compiled in: cuda=True opencl=%s)" % has_opencl)
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.variant }}
           path: release_assets/*
@@ -303,13 +303,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           path: rel
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             rel/lightgbm.exe
